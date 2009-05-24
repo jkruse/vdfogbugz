@@ -1,0 +1,636 @@
+Use UI
+Use cXmlHttpTransfer.pkg
+
+Define VDFOGBUGZ_API_VERSION for 5
+
+Enum_List
+    Define fbHTTP
+    Define fbHTTPS
+End_Enum_List
+
+Struct tfbFilter
+    String  Type      // "builtin", "saved", or "shared"
+    String  Code      // an opaque string that can be passed back to cmd=saveFilter
+    Boolean IsCurrent // true if this is the current filter
+    String  Name      // filter name
+End_Struct
+
+Struct tfbProject
+    Integer ID         // project id
+    String  Name       // project name
+    Integer OwnerID    // person who is the default owner for this project (id)
+    String  OwnerName  // name of owner
+    String  OwnerEmail // email of owner
+    String  OwnerPhone // phone of owner
+    Boolean Inbox      // true if this is the Inbox project
+    Integer Type       // type of group this project is part of (1 = client / 2 = dept)
+    Integer GroupID    // group (id) this project is part of
+    String  GroupName  // name of group this project is part of
+End_Struct
+
+Struct tfbArea
+    Integer ID          // area id
+    String  Name        // area name
+    Integer ProjectID   // project (id) this area belongs to
+    String  ProjectName // project (name) this area belongs to
+    Integer OwnerID     // default owner of this area. if empty then use project owner
+    String  OwnerName   // name of owner of this area. if empty then use project owner
+    Integer Type        // type of area: 0 = normal, 1 = Not Spam, 2 = Undecided, 3 = Spam (Inbox areas only)
+    Integer TrainCount  // number of documents trained into area (autosorted areas only)
+End_Struct
+
+Struct tfbCategory
+    Integer ID              // category id
+    String  Name            // category name
+    String  PluralName      // category plural name
+    Integer DefaultStatusID // when a case of this category type is resolved, the status id of the default (selected) status
+    Boolean ScheduleItem    // true if this is a schedule item category
+End_Struct
+
+Struct tfbPriority
+    Integer ID   // priority id
+    String  Name // priority name
+End_Struct
+
+Struct tfbPerson
+    Integer ID            // person (id)
+    String  Name          // person name
+    String  Email         // person email
+    String  Phone         // person phone
+    Boolean Administrator // true if user is a site admin
+    Boolean Community     // true if user is a community user
+    Boolean Virtual       // true if user is a virtual user
+    Boolean Deleted       // true if account is inactive
+    Boolean Notify        // true if user receives email notifications
+    String  Homepage      // homepage url
+    String  Locale        // The locale code for the date/number language (i.e., "en-us") ( "*" means use browser format )
+    String  Language      // The locale code for the UI language (i.e., "en-us") ( "*" means use browser format )
+    String  TimeZone      // A key that defines the time zone setting for this person's account (i.e., "Eastern Standard Time"). The values for this setting are operating system dependent. ( "*" means Use fogbugz default )
+End_Struct
+
+Struct tfbStatus
+End_Struct
+
+Struct tfbFixFor
+    Integer  ID
+    String   Name
+    Boolean  Deleted
+    DateTime Deadline
+    Integer  ProjectID
+    String   ProjectName
+End_Struct
+
+Struct tfbMailbox
+    Integer ID        // mailbox id
+    String  Email     // the email address from mailbox settings
+    String  EmailUser // the "personal" email address with your name
+    String  Template  // the automatic message reply text or "signature"
+End_Struct
+
+Struct tfbInterval
+    Integer  ID        // interval (id)
+    DateTime StartTime // start time of interval
+    DateTime EndTime   // end time of interval
+    Integer  CaseID    // case id for this interval
+    String   CaseTitle // title of case
+    Integer  PersonID  // person this interval applies to
+End_Struct
+
+Class cFogBugz is a cObject
+    
+    // Private methods
+    
+    Procedure Construct_Object
+        Forward Send Construct_Object
+        
+        Property String psPath
+        
+        { Visibility=Private }
+        Property String psAPI "api.xml"
+        
+        { Visibility=Private }
+        Property String psToken
+
+        Object oTransport is a cXmlHttpTransfer
+        End_Object
+    End_Procedure
+    
+    { Visibility=Private }
+    Function BuildPath String sFile String sCommand String sParams Returns String
+        String sPath sToken
+        Get psPath to sPath
+        Get psToken to sToken
+        
+        If ((sPath <> "") and (Right(sPath, 1) <> "/")) Move (sPath + "/") to sPath
+        Move (sPath + sFile) to sPath
+        If (sCommand <> "") Begin
+            If (Right(sPath, 1) <> "?") Move (sPath + "?") to sPath
+            Move (sPath + "cmd=" + sCommand) to sPath
+        End
+        If (sToken <> "") Move (sPath + "&token=" + sToken) to sPath
+        If (sParams <> "") Move (sPath + "&" + sParams) to sPath
+        
+        Function_Return sPath
+    End_Function // BuildPath
+    
+    { Visibility=Private }
+    Function API String sCommand String sParams Returns Handle
+        String sPath
+        Move (BuildPath(Self, psAPI(Self), sCommand, sParams)) to sPath
+        Send Info_Box ("Requesting " + If(piRemotePort(oTransport(Self)) = rpHttp, "http://", "https://") + psRemoteHost(oTransport(Self)) + "/" + sPath)
+        Function_Return (HttpGetXmlNode(oTransport(Self), (psRemoteHost(oTransport(Self))), sPath))
+    End_Function // API
+    
+    { Visibility=Private }
+    Function ValidResult Handle ByRef hoResult Returns Boolean
+        Handle hoError
+        If (hoResult = 0) Begin
+            Error 999 "Unable to communicate with FogBugz server"
+            Function_Return False
+        End
+        Get DocumentElement of hoResult to hoResult
+        Get ChildElementNS of hoResult "" "error" to hoError
+        If (hoError) Begin
+            Error 999 (psNodeValue(hoError))
+            Send Destroy of hoError
+            Send Destroy of hoResult
+            Function_Return False
+        End
+        Function_Return True
+    End_Function // ValidResult
+    
+    { Visibility=Private }
+    Function PadZero Integer iNumber Integer iLength Returns String
+        Function_Return (Repeat("0", iLength - Length(iNumber) max 0) + String(iNumber))
+    End_Function // PadZero
+    
+    { Visibility=Private }
+    Function ISO8601ToDateTime String sDateTime Returns DateTime
+        DateTime dt
+        If (sDateTime = "") Function_Return dt
+        Move (DateSetYear(dt, Mid(sDateTime, 4, 1))) to dt
+        Move (DateSetMonth(dt, Mid(sDateTime, 2, 6))) to dt
+        Move (DateSetDay(dt, Mid(sDateTime, 2, 9))) to dt
+        Move (DateSetHour(dt, Mid(sDateTime, 2, 12))) to dt
+        Move (DateSetMinute(dt, Mid(sDateTime, 2, 15))) to dt
+        Move (DateSetSecond(dt, Mid(sDateTime, 2, 18))) to dt
+        Move (DateSetMillisecond(dt, 0)) to dt
+        Function_Return dt
+    End_Function // ISO8601ToDateTime
+    
+    { Visibility=Private }
+    Function DateTimeToISO8601 DateTime dt Returns String
+        String str
+        Move (String(DateGetYear(dt)) + "-" + PadZero(Self, DateGetMonth(dt), 2) + "-" + PadZero(Self, DateGetDay(dt), 2)) to str
+        Move (str + "T" + PadZero(Self, DateGetHour(dt), 2) + ":" + PadZero(Self, DateGetMinute(dt), 2) + ":" + PadZero(Self, DateGetSecond(dt), 2)) to str
+        Function_Return str
+    End_Function // DateTimeToISO8601
+    
+    // Public methods
+    
+    { EnumList="fbHTTP, fbHTTPS" }
+    { MethodType=Property }
+    Procedure Set psProtocol Integer iProtocol
+        Case Begin
+            Case (iProtocol = fbHTTP)
+                Set peTransferFlags of oTransport to 0
+                Set piRemotePort of oTransport to rpHttp
+                Case Break
+            Case (iProtocol = fbHTTPS)
+                Set peTransferFlags of oTransport to ifSecure
+                Set piRemotePort of oTransport to rpHttpSSL
+                Case Break
+            Case Else
+                Error 999 "Valid values for psProtocol are fbHTTP or fbHTTPS"
+        Case End
+    End_Procedure // Set psProtocol
+    
+    { MethodType=Property }
+    Procedure Set psHost String sHost
+        Set psRemoteHost of oTransport to sHost
+    End_Procedure // Set psHost
+    
+    Function Logon String sEmail String sPassword Returns Boolean
+        Handle hoAPI hoLogon
+        String sURI sToken
+        Integer iMinVersion iMaxVersion
+        
+        // Check API version
+        Get API "" "" to hoAPI
+        If (ValidResult(Self, (&hoAPI))) Begin
+            Get ChildNodeValue of hoAPI "url"        to sURI
+            Get ChildNodeValue of hoAPI "minversion" to iMinVersion
+            Get ChildNodeValue of hoAPI "version"    to iMaxVersion
+            Send Destroy of hoAPI
+            If ((VDFOGBUGZ_API_VERSION < iMinVersion) or (VDFOGBUGZ_API_VERSION > iMaxVersion)) Begin
+                Error 999 "This version of VDFogBugz does not support the API on the specified server"
+                Function_Return False
+            End
+            Set psAPI to sURI
+            
+            // Log in
+            Get API "logon" ("email=" + sEmail + "&password=" + sPassword) to hoLogon
+            If (ValidResult(Self, (&hoLogon))) Begin
+                Get ChildNodeValue of hoLogon "token" to sToken
+                Set psToken to sToken
+                Send Destroy of hoLogon
+                Function_Return True
+            End
+        End
+        
+        Function_Return False
+    End_Function
+    
+    Function ListFilters tfbFilter[] ByRef aFilters Returns Boolean
+        Handle hoResult hoList hoItem
+        Integer i
+        String sBool
+        
+        Get API "listFilters" "" to hoResult
+        If (ValidResult(Self, (&hoResult))) Begin
+            Get FindNodeList of hoResult "filters/filter" to hoList
+            For i from 0 to (NodeListLength(hoList) - 1)
+                Get CollectionNode of hoList i to hoItem
+                Get AttributeValue of hoItem "type"    to aFilters[i].Type
+                Get AttributeValue of hoItem "sFilter" to aFilters[i].Code
+                Get AttributeValue of hoItem "status"  to sBool
+                Move (sBool = "current")               to aFilters[i].IsCurrent
+                Get psText         of hoItem           to aFilters[i].Name
+                Send Destroy of hoItem
+            Loop
+            Send Destroy of hoList
+            Send Destroy of hoResult
+            Function_Return True
+        End
+        
+        Function_Return False
+    End_Function // ListFilters
+    
+    Function ChangeFilter String sFilterCode Returns Boolean
+        Handle hoResult
+        
+        Get API "saveFilter" ("sFilter=" + sFilterCode) to hoResult
+        If (ValidResult(Self, (&hoResult))) Begin
+            Send Destroy of hoResult
+            Function_Return True
+        End
+        
+        Function_Return False
+    End_Function // ChangeFilter
+    
+    //TODO
+//    Function Search String sTerm String sCols Integer iMax Returns Boolean
+//        Handle hoResult
+//        
+//        Get API "search" ("q=" + sTerm + "&cols=" + sCols + If(iMax, "&max=" + String(iMax), "")) to hoResult
+//        If (ValidResult(Self, (&hoResult))) Begin
+//            //...
+//            Send Destroy of hoResult
+//            Function_Return True
+//        End
+//        
+//        Function_Return False
+//    End_Function // Search
+
+    //TODO: NewCase
+    //TODO: EditCase
+    //TODO: AssignCase
+    //TODO: ReactivateCase
+    //TODO: ReopenCase
+    //TODO: ResolveCase
+    //TODO: CloseCase
+    //TODO: EmailCase
+    //TODO: ReplyCase
+    //TODO: ForwardCase
+    
+    Function ListProjects Boolean bWritable tfbProject[] ByRef aProjects Returns Boolean
+        Handle hoResult hoList hoItem
+        Integer i
+        String sBool
+        
+        Get API "listProjects" (If(bWritable, "fWrite=1", "")) to hoResult
+        If (ValidResult(Self, (&hoResult))) Begin
+            Get FindNodeList of hoResult "projects/project" to hoList
+            For i from 0 to (NodeListLength(hoList) - 1)
+                Get CollectionNode of hoList i to hoItem
+                Get ChildNodeValue of hoItem "ixProject"     to aProjects[i].ID
+                Get ChildNodeValue of hoItem "sProject"      to aProjects[i].Name
+                Get ChildNodeValue of hoItem "ixPersonOwner" to aProjects[i].OwnerID
+                Get ChildNodeValue of hoItem "sPersonOwner"  to aProjects[i].OwnerName
+                Get ChildNodeValue of hoItem "sEmail"        to aProjects[i].OwnerEmail
+                Get ChildNodeValue of hoItem "sPhone"        to aProjects[i].OwnerPhone
+                Get ChildNodeValue of hoItem "fInbox"        to sBool
+                Move (sBool = "true")                        to aProjects[i].Inbox
+                Get ChildNodeValue of hoItem "iType"         to aProjects[i].Type
+                Get ChildNodeValue of hoItem "ixGroup"       to aProjects[i].GroupID
+                Get ChildNodeValue of hoItem "sGroup"        to aProjects[i].GroupName
+                Send Destroy of hoItem
+            Loop
+            Send Destroy of hoList
+            Send Destroy of hoResult
+            Function_Return True
+        End
+        
+        Function_Return False
+    End_Function // ListProjects
+    
+    Function ListAreas Boolean bWritable Integer iProjectID tfbArea[] ByRef aAreas Returns Boolean
+        Handle hoResult hoList hoItem
+        Integer i
+        
+        Get API "listAreas" (If(bWritable, "fWrite=1&", "") + "ixProject=" + String(iProjectID)) to hoResult
+        If (ValidResult(Self, (&hoResult))) Begin
+            Get FindNodeList of hoResult "areas/area" to hoList
+            For i from 0 to (NodeListLength(hoList) - 1)
+                Get CollectionNode of hoList i to hoItem
+                Get ChildNodeValue of hoItem "ixArea"        to aAreas[i].ID
+                Get ChildNodeValue of hoItem "sArea"         to aAreas[i].Name
+                Get ChildNodeValue of hoItem "ixProject"     to aAreas[i].ProjectID
+                Get ChildNodeValue of hoItem "sProject"      to aAreas[i].ProjectName
+                Get ChildNodeValue of hoItem "ixPersonOwner" to aAreas[i].OwnerID
+                Get ChildNodeValue of hoItem "sPersonOwner"  to aAreas[i].OwnerName
+                Get ChildNodeValue of hoItem "nType"         to aAreas[i].Type
+                Get ChildNodeValue of hoItem "cDoc"          to aAreas[i].TrainCount
+                Send Destroy of hoItem
+            Loop
+            Send Destroy of hoList
+            Send Destroy of hoResult
+            Function_Return True
+        End
+        
+        Function_Return False
+    End_Function // ListAreas
+    
+    Function ListCategories tfbCategory[] ByRef aCategories Returns Boolean
+        Handle hoResult hoList hoItem
+        Integer i
+        String sBool
+        
+        Get API "listCategories" "" to hoResult
+        If (ValidResult(Self, (&hoResult))) Begin
+            Get FindNodeList of hoResult "categories/category" to hoList
+            For i from 0 to (NodeListLength(hoList) - 1)
+                Get CollectionNode of hoList i to hoItem
+                Get ChildNodeValue of hoItem "ixCategory"      to aCategories[i].ID
+                Get ChildNodeValue of hoItem "sCategory"       to aCategories[i].Name
+                Get ChildNodeValue of hoItem "sPlural"         to aCategories[i].PluralName
+                Get ChildNodeValue of hoItem "ixStatusDefault" to aCategories[i].DefaultStatusID
+                Get ChildNodeValue of hoItem "fIsScheduleItem" to sBool
+                Move (sBool = "true")                          to aCategories[i].ScheduleItem
+                Send Destroy of hoItem
+            Loop
+            Send Destroy of hoList
+            Send Destroy of hoResult
+            Function_Return True
+        End
+        
+        Function_Return False
+    End_Function // ListCategories
+    
+    Function ListPriorities tfbPriority[] ByRef aPriorities Returns Boolean
+        Handle hoResult hoList hoItem
+        Integer i
+        
+        Get API "listPriorities" "" to hoResult
+        If (ValidResult(Self, (&hoResult))) Begin
+            Get FindNodeList of hoResult "priorities/priority" to hoList
+            For i from 0 to (NodeListLength(hoList) - 1)
+                Get CollectionNode of hoList i to hoItem
+                Get ChildNodeValue of hoItem "ixPriority" to aPriorities[i].ID
+                Get ChildNodeValue of hoItem "sPriority"  to aPriorities[i].Name
+                Send Destroy of hoItem
+            Loop
+            Send Destroy of hoList
+            Send Destroy of hoResult
+            Function_Return True
+        End
+        
+        Function_Return False
+    End_Function // ListPriorities
+    
+    Function ListPeople Boolean bNormal Boolean bCommunity Boolean bVirtual tfbPerson[] ByRef aPeople Returns Boolean
+        Handle hoResult hoList hoItem
+        Integer i
+        String sBool
+        
+        Get API "listPeople" (If(bNormal, "fIncludeNormal=1&", "") + If(bCommunity, "fIncludeCommunity=1&", "") + If(bVirtual, "fIncludeVirtual=1", "")) to hoResult
+        If (ValidResult(Self, (&hoResult))) Begin
+            Get FindNodeList of hoResult "people/person" to hoList
+            For i from 0 to (NodeListLength(hoList) - 1)
+                Get CollectionNode of hoList i to hoItem
+                Get ChildNodeValue of hoItem "ixPerson"       to aPeople[i].ID
+                Get ChildNodeValue of hoItem "sFullName"      to aPeople[i].Name
+                Get ChildNodeValue of hoItem "sEmail"         to aPeople[i].Email
+                Get ChildNodeValue of hoItem "sPhone"         to aPeople[i].Phone
+                Get ChildNodeValue of hoItem "fAdministrator" to sBool
+                Move (sBool = "true")                         to aPeople[i].Administrator
+                Get ChildNodeValue of hoItem "fCommunity"     to sBool
+                Move (sBool = "true")                         to aPeople[i].Community
+                Get ChildNodeValue of hoItem "fVirtual"       to sBool
+                Move (sBool = "true")                         to aPeople[i].Virtual
+                Get ChildNodeValue of hoItem "fDeleted"       to sBool
+                Move (sBool = "true")                         to aPeople[i].Deleted
+                Get ChildNodeValue of hoItem "fNotify"        to sBool
+                Move (sBool = "true")                         to aPeople[i].Notify
+                Get ChildNodeValue of hoItem "sHomepage"      to aPeople[i].Homepage
+                Get ChildNodeValue of hoItem "sLocale"        to aPeople[i].Locale
+                Get ChildNodeValue of hoItem "sLanguage"      to aPeople[i].Language
+                Get ChildNodeValue of hoItem "sTimeZoneKey"   to aPeople[i].TimeZone
+                Send Destroy of hoItem
+            Loop
+            Send Destroy of hoList
+            Send Destroy of hoResult
+            Function_Return True
+        End
+        
+        Function_Return False
+    End_Function // ListPeople
+    
+    Function ListStatuses Integer iCategoryID Boolean bResolved tfbStatus[] ByRef aStatuses Returns Boolean
+        Handle hoResult hoList hoItem
+        Integer i
+        
+        Get API "listStatuses" (If(iCategoryID, "ixCategory=" + String(iCategoryID) + "&", "") + If(bResolved, "fResolved=1", "")) to hoResult
+        If (ValidResult(Self, (&hoResult))) Begin
+            Send Info_Box (psXML(hoResult))
+//            Get FindNodeList of hoResult "statuses/status" to hoList
+//            For i from 0 to (NodeListLength(hoList) - 1)
+//                Get CollectionNode of hoList i to hoItem
+//                Send Destroy of hoItem
+//            Loop
+//            Send Destroy of hoList
+            Send Destroy of hoResult
+            Function_Return True
+        End
+        
+        Function_Return False
+    End_Function // ListStatuses
+    
+    Function ListFixFors Integer iProjectID Boolean bDeleted tfbFixFor[] ByRef aFixFors Returns Boolean
+        Handle hoResult hoList hoItem
+        Integer i
+        String sBool sDateTime
+        
+        Get API "listFixFors" (If(iProjectID, "ixProject=" + String(iProjectID) + "&", "") + If(bDeleted, "fIncludeDeleted=1", "")) to hoResult
+        If (ValidResult(Self, (&hoResult))) Begin
+            Get FindNodeList of hoResult "fixfors/fixfor" to hoList
+            For i from 0 to (NodeListLength(hoList) - 1)
+                Get CollectionNode of hoList i to hoItem
+                Get ChildNodeValue of hoItem "ixFixFor"   to aFixFors[i].ID
+                Get ChildNodeValue of hoItem "sFixFor"    to aFixFors[i].Name
+                Get ChildNodeValue of hoItem "fDeleted"   to sBool
+                Move (sBool = "true")                     to aFixFors[i].Deleted
+                Get ChildNodeValue of hoItem "dt"         to sDateTime
+                Move (ISO8601ToDateTime(Self, sDateTime)) to aFixFors[i].Deadline
+                Get ChildNodeValue of hoItem "ixProject"  to aFixFors[i].ProjectID
+                Get ChildNodeValue of hoItem "sProject"   to aFixFors[i].ProjectName
+                Send Destroy of hoItem
+            Loop
+            Send Destroy of hoList
+            Send Destroy of hoResult
+            Function_Return True
+        End
+        
+        Function_Return False
+    End_Function // ListFixFors
+    
+    Function ListMailboxes tfbMailbox[] ByRef aMailboxes Returns Boolean
+        Handle hoResult hoList hoItem
+        Integer i
+        
+        Get API "listMailboxes" "" to hoResult
+        If (ValidResult(Self, (&hoResult))) Begin
+            Get FindNodeList of hoResult "mailboxes/mailbox" to hoList
+            For i from 0 to (NodeListLength(hoList) - 1)
+                Get CollectionNode of hoList i to hoItem
+                Get ChildNodeValue of hoItem "ixMailbox"  to aMailboxes[i].ID
+                Get ChildNodeValue of hoItem "sEmail"     to aMailboxes[i].Email
+                Get ChildNodeValue of hoItem "sEmailUser" to aMailboxes[i].EmailUser
+                Get ChildNodeValue of hoItem "sTemplate"  to aMailboxes[i].Template
+                Send Destroy of hoItem
+            Loop
+            Send Destroy of hoList
+            Send Destroy of hoResult
+            Function_Return True
+        End
+        
+        Function_Return False
+    End_Function // ListMailboxes
+    
+    //TODO: NewProject
+    //TODO: NewArea
+    //TODO: NewPerson
+    //TODO: NewFixFor
+    
+    //TODO: ViewProject
+    //TODO: ViewArea
+    //TODO: ViewPerson
+    //TODO: ViewFixFor
+    //TODO: ViewCategory
+    //TODO: ViewPriority
+    //TODO: ViewStatus
+    //TODO: ViewMailbox
+    
+    //TODO: ListWorkingSchedule
+    //TODO: DateFromHours
+    
+    Function StartWork Integer iCaseID Returns Boolean
+        Handle hoResult
+        
+        Get API "startWork" ("ixBug=" + String(iCaseID)) to hoResult
+        If (ValidResult(Self, (&hoResult))) Begin
+            Send Destroy of hoResult
+            Function_Return True
+        End
+        
+        Function_Return False
+    End_Function // StartWork
+    
+    Function StopWork Returns Boolean
+        Handle hoResult
+        
+        Get API "stopWork" "" to hoResult
+        If (ValidResult(Self, (&hoResult))) Begin
+            Send Destroy of hoResult
+            Function_Return True
+        End
+        
+        Function_Return False
+    End_Function // StopWork
+    
+    Function NewInterval Integer iCaseID DateTime dtStart DateTime dtEnd Returns Boolean
+        Handle hoResult
+        
+        Get API "newInterval" ("ixBug=" + String(iCaseID) + "&dtStart=" + DateTimeToISO8601(Self, dtStart) + "&dtEnd=" + DateTimeToISO8601(Self, dtEnd)) to hoResult
+        If (ValidResult(Self, (&hoResult))) Begin
+            Send Destroy of hoResult
+            Function_Return True
+        End
+        
+        Function_Return False
+    End_Function // NewInterval
+    
+    Function ListIntervals DateTime dtStart DateTime dtEnd tfbInterval[] ByRef aIntervals Returns Boolean
+        Handle hoResult hoList hoItem
+        Integer i
+        String sDateTime
+        
+        Get API "listIntervals" ("dtStart=" + DateTimeToISO8601(Self, dtStart) + "&dtEnd=" + DateTimeToISO8601(Self, dtEnd)) to hoResult
+        If (ValidResult(Self, (&hoResult))) Begin
+            Get FindNodeList of hoResult "intervals/interval" to hoList
+            For i from 0 to (NodeListLength(hoList) - 1)
+                Get CollectionNode of hoList i to hoItem
+                Get ChildNodeValue of hoItem "ixBug"      to aIntervals[i].CaseID
+                Get ChildNodeValue of hoItem "ixInterval" to aIntervals[i].ID
+                Get ChildNodeValue of hoItem "dtStart"    to sDateTime
+                Move (ISO8601ToDateTime(Self, sDateTime)) to aIntervals[i].StartTime
+                Get ChildNodeValue of hoItem "dtEnd"      to sDateTime
+                Move (ISO8601ToDateTime(Self, sDateTime)) to aIntervals[i].EndTime
+                Get ChildNodeValue of hoItem "sTitle"     to aIntervals[i].CaseTitle
+                Get ChildNodeValue of hoItem "ixPerson"   to aIntervals[i].PersonID
+                Send Destroy of hoItem
+            Loop
+            Send Destroy of hoList
+            Send Destroy of hoResult
+            Function_Return True
+        End
+        
+        Function_Return False
+    End_Function // ListIntervals
+    
+    //TODO: NewCheckin
+    //TODO: ListCheckins
+    
+    //TODO: ReleaseNotes
+    
+    //TODO: NewWiki
+    //TODO: EditWiki
+    //TODO: DeleteWiki
+    //TODO: NewArticle
+    //TODO: EditArticle
+    //TODO: ListWikis
+    //TODO: ListArticles
+    //TODO: ViewArticle
+    //TODO: ListTemplates
+    //TODO: ListTemplateRevisions
+    //TODO: ViewTemplate
+    //TODO: DeleteTemplate
+    //TODO: NewTemplate
+    //TODO: EditTemplate
+    //TODO: WikiFileUpload
+    
+    //TODO: ListDiscussGroups
+    //TODO: ListDiscussion
+    //TODO: ListDiscussTopic
+    
+    //TODO: ListScoutCase
+    
+    //TODO: SubscribeCase
+    //TODO: SubscribeWikiPage
+    //TODO: UnsubscribeCase
+    //TODO: UnsubscribeWikiPage
+    
+    //TODO: View
+    
+    //TODO: ViewSettings
+End_Class
