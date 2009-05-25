@@ -1,0 +1,76 @@
+= VDFogBugz
+==== Visual DataFlex library for FogBugz
+
+VDFogBugz is a Visual DataFlex library containing a single class, +cFogBugz+,
+which can act as an interface to a FogBugz installation.
+
+== Using VDFogBugz
+
+VDFogBugz is a Visual DataFlex workspace, prepared to be used as a library.
+
+Download VDFogBugz using the download link on github and extract the archive
+to your filesystem. Add a reference to the VDFogBugz workspace matching your
+version of VDF to your project. Then add something similar to this to your
+source code:
+
+  Use cFogBugz.pkg
+  
+  Object oFogBugz is a cFogBugz
+      Set psProtocol to fbHTTPS
+      Set psHost to "example.fogbugz.com"
+      // Set psPath to "path/to/fogbugz/installation"
+  End_Object
+
+With this in place you're all set to do something like:
+
+  tfbProject[] myProjects
+  Integer i
+  
+  If (Logon(oFogBugz(Self), "user@example.com", "password")) Begin
+      If (ListProjects(oFogBugz(Self), False, (&myProjects))) Begin
+          For i from 0 to (SizeOfArray(myProjects) - 1)
+              Showln myProjects[i].Name
+          Loop
+      End
+  End
+
+== About cFogBugz
+
+The class has only three public properties: +psProtocol+, +psHost+ and
++psPath+. You need only use +psPath+ if FogBugz is not installed in the root
+of the domain specified by +psHost+.
+
+You must call +Logon+ before you can access the rest of the methods.
+
+All methods of +cFogBugz+ returns a boolean value indicating the success of the
+call - true for 'ok', false in case of errors. Errors will be reported using
+the +Error+ statement, so use an error handler if you don't want your users to
+see them.
+
+Methods which, in the FogBugz API, return data will have a +ByRef+ parameter,
+like +myProjects+ in the example above. In case of arrays, they should always
+be empty before the call.
+
+The workspace includes a test program and an example view demonstrating further
+use of the class.
+
+== Project status
+
+Currently 21% of the FogBugz version 5 API has been implemented:
+
+* Logon
+* ListFilters
+* ChangeFilter*
+* ListProjects
+* ListAreas*
+* ListCategories*
+* ListPriorities*
+* ListPeople*
+* ListFixFors*
+* ListMailboxes*
+* StartWork*
+* StopWork*
+* NewInterval*
+* ListIntervals
+
+Methods marked with an asterisk are untested.
