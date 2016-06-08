@@ -1,7 +1,7 @@
 Use UI
 Use cXmlHttpTransfer.pkg
 
-Define VDFOGBUGZ_API_VERSION for 5
+Define VDFOGBUGZ_API_VERSION for 8
 
 Enum_List
     Define fbHTTP
@@ -137,7 +137,7 @@ Class cFogBugz is a cObject
     Function API String sCommand String sParams Returns Handle
         String sPath
         Move (BuildPath(Self, psAPI(Self), sCommand, sParams)) to sPath
-        Send Info_Box ("Requesting " + If(piRemotePort(oTransport(Self)) = rpHttp, "http://", "https://") + psRemoteHost(oTransport(Self)) + "/" + sPath)
+        //Send Info_Box ("Requesting " + If(piRemotePort(oTransport(Self)) = rpHttp, "http://", "https://") + psRemoteHost(oTransport(Self)) + "/" + sPath)
         Function_Return (HttpGetXmlNode(oTransport(Self), (psRemoteHost(oTransport(Self))), sPath))
     End_Function // API
     
@@ -517,7 +517,19 @@ Class cFogBugz is a cObject
         Function_Return False
     End_Function // ListMailboxes
     
-    //TODO: NewProject
+    Function NewProject String sProject Integer iPrimaryContactID Boolean bAllowPublicSubmit Integer iGroupID Boolean bInbox Integer ByRef iProjectID Returns Boolean
+        Handle hoResult
+        
+        Get API "newProject" ("sProject=" + sProject + ;
+            If(iPrimaryContactID, "&ixPersonPrimaryContact=" + String(iPrimaryContactID), "") + ;
+            If(bAllowPublicSubmit, "&fAllowPublicSubmit=1", "") + ;
+            If(iGroupID, "&ixGroup=" + String(iGroupID), "") + ;
+            If(bInbox, "&fInbox=1", "")) to hoResult
+        If (ValidResult(Self, (&hoResult))) Begin
+            
+        End
+    End_Function
+    
     //TODO: NewArea
     //TODO: NewPerson
     //TODO: NewFixFor
@@ -570,12 +582,30 @@ Class cFogBugz is a cObject
         Function_Return False
     End_Function // NewInterval
     
-    Function ListIntervals DateTime dtStart DateTime dtEnd tfbInterval[] ByRef aIntervals Returns Boolean
+    // dtStart, dtEnd, iPerson and iCase are optional.
+    // Send NullDateTime() for dtStart and dtEnd to skip these.
+    // Send -1 for iPerson to list intervals for the logged on user, or 1 to list intervals for all users.
+    // Send -1 for iCase to skip case filtering.
+    Function ListIntervals DateTime dtStart DateTime dtEnd Integer iPerson Integer iCase tfbInterval[] ByRef aIntervals Returns Boolean
         Handle hoResult hoList hoItem
         Integer i
-        String sDateTime
+        String sDateTime sParams
         
-        Get API "listIntervals" ("dtStart=" + DateTimeToISO8601(Self, dtStart) + "&dtEnd=" + DateTimeToISO8601(Self, dtEnd)) to hoResult
+        Move "" to sParams
+        If (not(IsNullDateTime(dtStart))) Begin
+            Move (sParams + "&dtStart=" + DateTimeToISO8601(Self, dtStart)) to sParams
+        End
+        If (not(IsNullDateTime(dtEnd))) Begin
+            Move (sParams + "&dtEnd=" + DateTimeToISO8601(Self, dtEnd)) to sParams
+        End
+        If (iPerson <> -1) Begin
+            Move (sParams + "&ixPerson=" + String(iPerson)) to sParams
+        End
+        If (iCase <> -1) Begin
+            Move (sParams + "&ixBug=" + String(iCase)) to sParams
+        End
+        
+        Get API "listIntervals" (Mid(sParams, 999, 2)) to hoResult
         If (ValidResult(Self, (&hoResult))) Begin
             Get FindNodeList of hoResult "intervals/interval" to hoList
             For i from 0 to (NodeListLength(hoList) - 1)

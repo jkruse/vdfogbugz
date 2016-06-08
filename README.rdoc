@@ -33,6 +33,8 @@ With this in place you're all set to do something like:
           Loop
       End
   End
+  
+TODO: Support using an API token from FogBugz on demand.
 
 == About cFogBugz
 

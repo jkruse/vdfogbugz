@@ -121,7 +121,7 @@ Object oVDFogBugzTest is a dbView
             Move (DateSetDay(tsOneWeek, 7)) to tsOneWeek
             Move (dtEnd - tsOneWeek) to dtStart
             
-            If (ListIntervals(oFB(Self), dtStart, dtEnd, (&aIntervals))) Begin
+            If (ListIntervals(oFB(Self), dtStart, dtEnd, 1, -1, (&aIntervals))) Begin
                 Showln "Intervals (in Zulu time zone):"
                 For i from 0 to (SizeOfArray(aIntervals) - 1)
                     Showln "  " aIntervals[i].StartTime " - " aIntervals[i].EndTime " : " aIntervals[i].CaseTitle
